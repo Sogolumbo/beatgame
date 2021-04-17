@@ -1,14 +1,18 @@
 import pygame
+import os
 from level import Level
+
 
 pygame.init()
 pygame.mixer.init()
 
+
 class Player:
 
-    def __init__(self, level: Level):
+    def __init__(self, level: Level, fps):
 
         self.level = level
+        self.fps = fps
 
         # set images
         self.images = {
@@ -21,8 +25,9 @@ class Player:
         }
         self.particle = pygame.image.load('assets/images/particle.png').convert()
         self.wrong = pygame.mixer.Sound('assets/sounds/wrong.wav')
+        self.wrong.set_volume(0.4)
 
-        self.count = 0
+        self.particle_counter = 0
 
         self.rect = self.images['stand'].get_rect()
         self.rect.x = 70
@@ -30,11 +35,14 @@ class Player:
         self.floor = 368
 
         self.vel_x = 0
-        self.vel_y = 0
-        self.grav = 1
+        self.vel_y = 0.
         self.jump = 0
+        
+        self.grav = 4*900.  # in pixels per second^2
+        self.vel_y_on_damage = 30.  # in pixels per second
+        self.vel_y_on_jump = 900.   # in pixels per second
 
-        self.score = 0
+        self.score = 0.
         self.combo = 0
 
         self.life = self.level.duration//3 + 5
@@ -46,21 +54,22 @@ class Player:
 
         self.particles = []
 
-    def update(self):
+    def update(self, timePassed):
         if self.life:
             self.collide = False
+            offset = int(-timePassed * self.vel_x)
             for obstacle in self.level.obstacles:
-                obstacle.x -= self.vel_x
+                obstacle.updateOffset(offset)
                 if self.rect.colliderect(obstacle):
                     self.damage()
                     self.collide = True
                     self.combo = 0
                     self.jump = 0
-                    if self.vel_y < 0:
-                        self.vel_y = 0
+                    if self.vel_y < self.vel_y_on_damage:
+                        self.vel_y = self.vel_y_on_damage
             if not self.collide:
-                self.vel_y -= self.grav
-            self.rect.y -= self.vel_y
+                self.vel_y -= self.grav/self.fps
+            self.rect.y -= self.vel_y/self.fps   
             if self.rect.y >= self.floor:
                 self.rect.y = self.floor
                 self.vel_y = 0
@@ -75,29 +84,25 @@ class Player:
                     self.jump = 0
 
             if self.level.obstacles:
-                self.score += self.combo
-            self.count += 1
-            self.count %= 3
-            if not self.count:
+                self.score += self.combo *(60./self.fps)
+            self.particle_counter += 1
+            if self.particle_counter>=self.fps/20: # add 20 particles per second
                 self.particles.append(self.rect.y)
+                self.particle_counter = 0
             if not self.vel_y:
                 self.particles = []
+            if self.combo < len(self.particles):
+                del self.particles[0:-int(self.combo)]
 
         if self.life < 0:
             self.life = 0
         if self.life == 0:
             self.level.song.stop()
 
-        new_obstacles = []
-        new_colors = []
         for index, obstacle in enumerate(self.level.obstacles):
-            if obstacle.x > -100:
-                new_obstacles.append(self.level.obstacles[index])
-                new_colors.append(self.level.colors[index])
-        self.level.obstacles = new_obstacles
-        self.level.colors = new_colors
-        if not len(self.level.obstacles):
-            self.level.song.set_volume(self.level.song.get_volume()/1.01)
+            if obstacle.x < -100:
+                del self.level.obstacles[index]
+                del self.level.colors[index]
 
     def damage(self):
         self.shield -= 1
@@ -107,14 +112,21 @@ class Player:
         self.wrong.play()
         
     def draw(self, game):
+        # draw background
         game.fill((0, 0, 20))
+        # draw ground
         pygame.draw.rect(game, (255, 240, 240), (0, 400, 800, 100))
+
+        # draw particles
         if self.vel_y:
-            for distance, pos_y in enumerate(self.particles):
-                game.blit(self.particle, (self.rect.x - 1 - 2 * distance, pos_y))
+            for index, pos_y in enumerate(self.particles):
+                game.blit(self.particle, (self.rect.x - 8 * ((len(self.particles) - index)), pos_y))
+        # draw obstacles
         for index in range(len(self.level.obstacles)):
             if self.level.obstacles[index].x < 801:
                 pygame.draw.rect(game, self.level.colors[index], self.level.obstacles[index])
+
+        # draw character
         if not self.life:
             game.blit(self.images['dead'], (self.rect.x, self.rect.y))
         elif not self.run:
@@ -128,22 +140,42 @@ class Player:
         else:
             game.blit(self.images['run'], (self.rect.x, self.rect.y))
 
-    def spacebar(self):
-        if not self.run:
-            self.run = True
-            self.vel_x = 4
-            self.level.song.play()
+    def start(self):
+        self.run = True
+        self.vel_x = self.level.pixels_per_sec
+        self.level.song.play()
 
+    def spacebar(self):
         if self.jump < 2:
             self.jump += 1
             if self.level.obstacles:
-                self.combo += 1
+                if self.jump == 1:
+                    self.combo += 1
                 self.shield += self.combo
                 if self.shield > 10:
                     self.shield = 10
             if self.vel_y < 0:
-                self.vel_y = 10
+                self.vel_y = self.vel_y_on_jump
             else:
-                self.vel_y += 15
+                self.vel_y += self.vel_y_on_jump
         if not self.life:
             self.ended = True
+
+    def save(self):
+        filename = 'highscores.txt'
+        song = self.level.song_name
+        separator = ' '
+        highs = []
+        first_time = True
+        if os.path.exists(filename):
+            with open(filename, 'r') as highscores:
+                highs = highscores.readlines()
+            for index, line in enumerate(highs):
+                if line.startswith(song):
+                    value = int(line.split(separator)[1])
+                    highs[index] = song + separator + str(int(max(self.score, value))) + '\n'
+                    first_time = False
+        if first_time:
+            highs.append(song + separator + str(int(self.score)) + '\n')
+        with open(filename, 'w') as highscores:
+            highscores.writelines(highs)
