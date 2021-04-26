@@ -88,11 +88,10 @@ class Player:
             
             # increase score
             if self.level.obstacles:
-                self.score += self.combo *(config.SCORE_POINTS_PER_SECOND/config.BASE_FPS)
-            
-            # show particles when the player is in the air
+                self.score += self.combo * (config.SCORE_POINTS_PER_SECOND/config.BASE_FPS)
+
             self.particle_counter += 1
-            if self.particle_counter>=config.BASE_FPS/config.PARTICLES_PER_SECOND:
+            if self.particle_counter >= config.BASE_FPS/config.PARTICLES_PER_SECOND:
                 self.particles.append(self.rect.y)
                 self.particle_counter = 0
             if not self.vel_y:
